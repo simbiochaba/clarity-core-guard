@@ -8,59 +8,94 @@ import {
 import { assertEquals } from 'https://deno.land/std@0.90.0/testing/asserts.ts';
 
 Clarinet.test({
-    name: "Ensures users can store and manage their data",
-    async fn(chain: Chain, accounts: Map<string, Account>) {
-        const deployer = accounts.get('deployer')!;
-        const user1 = accounts.get('wallet_1')!;
-        const user2 = accounts.get('wallet_2')!;
+  name: "Ensures core data management features work",
+  async fn(chain: Chain, accounts: Map<string, Account>) {
+    const deployer = accounts.get('deployer')!;
+    const user1 = accounts.get('wallet_1')!;
+    const user2 = accounts.get('wallet_2')!;
 
-        // Test data storage
-        let block = chain.mineBlock([
-            Tx.contractCall('core_guard', 'store-data', [
-                types.utf8("encrypted-test-data")
-            ], user1.address)
-        ]);
-        block.receipts[0].result.expectOk().expectBool(true);
+    // Test data storage
+    let block = chain.mineBlock([
+      Tx.contractCall('core_guard', 'store-data', [
+        types.utf8("encrypted-test-data")
+      ], user1.address)
+    ]);
+    block.receipts[0].result.expectOk().expectBool(true);
 
-        // Test access control
-        block = chain.mineBlock([
-            Tx.contractCall('core_guard', 'grant-access', [
-                types.principal(user2.address)
-            ], user1.address)
-        ]);
-        block.receipts[0].result.expectOk().expectBool(true);
+    // Test access control with expiration
+    const futureTime = 1000000;
+    block = chain.mineBlock([
+      Tx.contractCall('core_guard', 'grant-access', [
+        types.principal(user2.address),
+        types.some(types.uint(futureTime))
+      ], user1.address)
+    ]);
+    block.receipts[0].result.expectOk().expectBool(true);
 
-        // Test data access
-        block = chain.mineBlock([
-            Tx.contractCall('core_guard', 'access-data', [
-                types.principal(user1.address)
-            ], user2.address)
-        ]);
-        block.receipts[0].result.expectOk().expectUtf8("encrypted-test-data");
+    // Test data access
+    block = chain.mineBlock([
+      Tx.contractCall('core_guard', 'access-data', [
+        types.principal(user1.address)
+      ], user2.address)
+    ]);
+    block.receipts[0].result.expectOk().expectUtf8("encrypted-test-data");
+  }
+});
 
-        // Test access revocation
-        block = chain.mineBlock([
-            Tx.contractCall('core_guard', 'revoke-access', [
-                types.principal(user2.address)
-            ], user1.address)
-        ]);
-        block.receipts[0].result.expectOk().expectBool(true);
+Clarinet.test({
+  name: "Tests batch permission management",
+  async fn(chain: Chain, accounts: Map<string, Account>) {
+    const user1 = accounts.get('wallet_1')!;
+    const user2 = accounts.get('wallet_2')!;
+    const user3 = accounts.get('wallet_3')!;
+    const user4 = accounts.get('wallet_4')!;
 
-        // Test unauthorized access
-        block = chain.mineBlock([
-            Tx.contractCall('core_guard', 'access-data', [
-                types.principal(user1.address)
-            ], user2.address)
-        ]);
-        block.receipts[0].result.expectErr(types.uint(100));
+    // Test batch access grant
+    let block = chain.mineBlock([
+      Tx.contractCall('core_guard', 'store-data', [
+        types.utf8("batch-test-data")
+      ], user1.address),
+      Tx.contractCall('core_guard', 'grant-batch-access', [
+        types.list([
+          types.principal(user2.address),
+          types.principal(user3.address),
+          types.principal(user4.address)
+        ]),
+        types.none()
+      ], user1.address)
+    ]);
+    
+    block.receipts[1].result.expectOk().expectUint(1);
 
-        // Test access logs
-        block = chain.mineBlock([
-            Tx.contractCall('core_guard', 'get-access-logs', [
-                types.principal(user1.address)
-            ], user1.address)
-        ]);
-        const logs = block.receipts[0].result.expectOk().expectSome();
-        assertEquals(logs['access-count'], types.uint(1));
-    }
+    // Test access for batch users
+    block = chain.mineBlock([
+      Tx.contractCall('core_guard', 'access-data', [
+        types.principal(user1.address)
+      ], user2.address),
+      Tx.contractCall('core_guard', 'access-data', [
+        types.principal(user1.address)
+      ], user3.address)
+    ]);
+    
+    block.receipts[0].result.expectOk().expectUtf8("batch-test-data");
+    block.receipts[1].result.expectOk().expectUtf8("batch-test-data");
+
+    // Test batch revocation
+    block = chain.mineBlock([
+      Tx.contractCall('core_guard', 'revoke-batch-access', [
+        types.uint(1)
+      ], user1.address)
+    ]);
+    
+    block.receipts[0].result.expectOk().expectBool(true);
+
+    // Verify access revoked
+    block = chain.mineBlock([
+      Tx.contractCall('core_guard', 'access-data', [
+        types.principal(user1.address)
+      ], user2.address)
+    ]);
+    
+    block.receipts[0].result.expectErr(types.uint(100));
+  }
 });
