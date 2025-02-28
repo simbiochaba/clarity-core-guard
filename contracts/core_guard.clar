@@ -7,6 +7,7 @@
 (define-constant err-no-data (err u102))
 (define-constant err-already-exists (err u103))
 (define-constant err-expired (err u104))
+(define-constant err-invalid-batch (err u105))
 
 ;; Data Variables
 (define-map user-data { owner: principal } { encrypted-data: (string-utf8 1024) })
@@ -62,6 +63,18 @@
   )
 )
 
+(define-public (delete-data)
+  (let ((existing-data (map-get? user-data {owner: tx-sender})))
+    (if (is-none existing-data)
+      err-no-data
+      (begin
+        (map-delete user-data {owner: tx-sender})
+        (ok true)
+      )
+    )
+  )
+)
+
 (define-public (grant-access (to principal) (expiry (optional uint)))
   (grant-single-access to expiry)
 )
@@ -70,79 +83,21 @@
   (let 
     (
       (batch-id (+ (var-get batch-nonce) u1))
+      (accessor-count (len to))
     )
-    (begin
-      (var-set batch-nonce batch-id)
-      (map-set batch-permissions
-        { batch-id: batch-id }
-        { owner: tx-sender, accessors: to }
-      )
-      (map (lambda (accessor) (grant-single-access accessor expiry)) to)
-      (ok batch-id)
-    )
-  )
-)
-
-(define-public (revoke-access (from principal))
-  (begin
-    (map-set data-permissions
-      {data-owner: tx-sender, accessor: from}
-      {can-access: false, expiration: none}
-    )
-    (ok true)
-  )
-)
-
-(define-public (revoke-batch-access (batch-id uint))
-  (let ((batch (unwrap! (map-get? batch-permissions {batch-id: batch-id}) err-no-data)))
-    (if (is-eq tx-sender (get owner batch))
+    (if (> accessor-count u0)
       (begin
-        (map 
-          (lambda (accessor) 
-            (map-set data-permissions
-              {data-owner: tx-sender, accessor: accessor}
-              {can-access: false, expiration: none}
-            )
-          )
-          (get accessors batch)
+        (var-set batch-nonce batch-id)
+        (map-set batch-permissions
+          { batch-id: batch-id }
+          { owner: tx-sender, accessors: to }
         )
-        (ok true)
+        (map (lambda (accessor) (grant-single-access accessor expiry)) to)
+        (ok batch-id)
       )
-      err-unauthorized
+      err-invalid-batch
     )
   )
 )
 
-(define-public (access-data (owner principal))
-  (let (
-    (authorized (is-authorized owner tx-sender))
-    (current-time (unwrap-panic (get-block-info? time u0)))
-  )
-    (if authorized
-      (begin
-        (map-set access-logs 
-          {data-owner: owner}
-          {
-            access-count: (+ u1 (default-to u0 (get access-count (map-get? access-logs {data-owner: owner})))),
-            last-access: current-time
-          }
-        )
-        (ok (get encrypted-data (unwrap! (map-get? user-data {owner: owner}) err-no-data)))
-      )
-      err-unauthorized
-    )
-  )
-)
-
-;; Read Only Functions
-(define-read-only (get-access-logs (owner principal))
-  (ok (map-get? access-logs {data-owner: owner}))
-)
-
-(define-read-only (check-access (owner principal) (accessor principal))
-  (ok (is-authorized owner accessor))
-)
-
-(define-read-only (get-batch-info (batch-id uint))
-  (ok (map-get? batch-permissions {batch-id: batch-id}))
-)
+[... remaining functions unchanged ...]
